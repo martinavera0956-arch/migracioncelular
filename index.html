@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Migración Celular</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700&family=Space+Mono:wght@400;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #111820;
+    font-family: 'Syne', sans-serif;
+    color: #ddeeff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding-bottom: 20px;
+  }
+  h1 {
+    margin-top: 22px;
+    font-size: 1.6rem;
+    letter-spacing: 3px;
+    color: #6ee7f7;
+    text-shadow: 0 0 20px #6ee7f766;
+  }
+  #phase-box {
+    margin: 8px 0 6px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.82rem;
+    letter-spacing: 1px;
+    color: #99ccee;
+    min-height: 22px;
+    text-align: center;
+  }
+  canvas {
+    border-radius: 14px;
+    border: 1px solid #1e3a5a;
+    box-shadow: 0 0 50px #0a2a4a88;
+  }
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 14px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.5px;
+  }
+  .li { display:flex; align-items:center; gap:6px; }
+  .lc { width:12px; height:12px; border-radius:50%; }
+  #btn-pause {
+    margin-top: 16px;
+    background: transparent;
+    border: 2px solid #4a9acc;
+    color: #6ee7f7;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+    padding: 10px 32px;
+    border-radius: 30px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+    box-shadow: 0 0 12px #4a9acc44;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #btn-pause:hover {
+    background: #4a9acc22;
+    box-shadow: 0 0 22px #4a9accaa;
+  }
+  #btn-pause.paused {
+    border-color: #3ae8b0;
+    color: #3ae8b0;
+    box-shadow: 0 0 16px #3ae8b066;
+  }
+  #btn-pause.paused:hover {
+    background: #3ae8b022;
+    box-shadow: 0 0 26px #3ae8b0aa;
+  }
+  .btn-icon { font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<h1>MIGRACIÓN CELULAR</h1>
+<div id="phase-box">—</div>
+<canvas id="c" width="900" height="420"></canvas>
+<div class="legend">
+  <div class="li"><div class="lc" style="background:#3ae8b0"></div>Lamelipodio</div>
+  <div class="li"><div class="lc" style="background:#ffe066"></div>Filopodio</div>
+  <div class="li"><div class="lc" style="background:#ff5555"></div>Adhesión</div>
+  <div class="li"><div class="lc" style="background:#a78bfa"></div>Tracción</div>
+  <div class="li"><div class="lc" style="background:#f97316"></div>Retracción</div>
+</div>
+<button id="btn-pause" onclick="togglePause()">
+  <span class="btn-icon" id="btn-icon">⏸</span>
+  <span id="btn-label">PAUSAR</span>
+</button>
+
+<script>
+let paused = false;
+let animId = null;
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('btn-pause');
+  const icon = document.getElementById('btn-icon');
+  const label = document.getElementById('btn-label');
+  if (paused) {
+    btn.classList.add('paused');
+    icon.textContent = '▶';
+    label.textContent = 'REPRODUCIR';
+    cancelAnimationFrame(animId);
+  } else {
+    btn.classList.remove('paused');
+    icon.textContent = '⏸';
+    label.textContent = 'PAUSAR';
+    draw();
+  }
+}
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ─── Layout ───────────────────────────────────────────────
+const SURF_Y = H - 110; // y of substrate surface
+
+const CELL_H = 70;
+const CELL_W = 90;
+
+let cellX = 130;
+const cellBottom = SURF_Y;
+const cellCY = SURF_Y - CELL_H * 0.55;
+
+let t = 0;
+let cycleTime = 0;
+const CYCLE = 380;
+
+const PHASES = [
+  "① Extensión del Lamelipodio — la célula despliega su borde delantero sobre la superficie",
+  "② Adhesión — el lamelipodio se pega al sustrato con puntos de contacto",
+  "③ Tracción — la célula jala su cuerpo hacia adelante",
+  "④ Retracción — la cola trasera se despega y se recoge",
+];
+
+function phaseNorm() { return (cycleTime % CYCLE) / CYCLE; }
+function phaseIdx() {
+  const p = phaseNorm();
+  if (p < 0.26) return 0;
+  if (p < 0.52) return 1;
+  if (p < 0.76) return 2;
+  return 3;
+}
+
+function drawSubstrate() {
+  // Background above surface
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, SURF_Y);
+  bgGrad.addColorStop(0, '#0c1520');
+  bgGrad.addColorStop(1, '#111d2c');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, SURF_Y);
+
+  // ECM layer fill below
+  const ecmGrad = ctx.createLinearGradient(0, SURF_Y, 0, H);
+  ecmGrad.addColorStop(0, '#1a3050');
+  ecmGrad.addColorStop(1, '#0d1e30');
+  ctx.fillStyle = ecmGrad;
+  ctx.fillRect(0, SURF_Y, W, H - SURF_Y);
+
+  // ECM fibers below surface
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  for (let x = 0; x < W; x += 28) {
+    ctx.beginPath();
+    ctx.moveTo(x, SURF_Y);
+    ctx.lineTo(x + 14, H);
+    ctx.strokeStyle = '#4a9acc';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+  for (let y = SURF_Y + 15; y < H; y += 22) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.strokeStyle = '#4a9acc';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Surface line — prominent
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(0, SURF_Y);
+  ctx.lineTo(W, SURF_Y);
+  ctx.strokeStyle = '#4a9acc';
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = '#4a9acc';
+  ctx.shadowBlur = 10;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = 'bold 11px Space Mono';
+  ctx.fillStyle = 'rgba(74,154,204,0.6)';
+  ctx.fillText('SUSTRATO (Matriz Extracelular)', 14, SURF_Y + 20);
+  ctx.restore();
+}
+
+function drawArrow() {
+  ctx.save();
+  ctx.font = 'bold 11px Space Mono';
+  ctx.fillStyle = 'rgba(110,231,247,0.4)';
+  ctx.fillText('DIRECCIÓN →', W - 160, 30);
+  ctx.restore();
+}
+
+let lastLamW = 0;
+
+function drawLamellipodium(cx) {
+  const p = phaseNorm();
+  let ext = 0;
+  if (p < 0.26)       ext = p / 0.26;
+  else if (p < 0.55)  ext = 1.0;
+  else if (p < 0.70)  ext = 1 - (p - 0.55) / 0.15 * 0.25;
+  else                ext = 0.75;
+
+  const lamW = 85 * ext;
+  const lamH = 16 * ext;
+  lastLamW = lamW;
+
+  if (ext < 0.05) return;
+
+  ctx.save();
+  // Flat veil on surface going forward
+  ctx.beginPath();
+  ctx.moveTo(cx + CELL_W * 0.65, cellBottom);
+  const steps = 30;
+  for (let i = 0; i <= steps; i++) {
+    const ratio = i / steps;
+    const lx = cx + CELL_W * 0.65 + lamW * ratio;
+    const ripple = Math.sin(ratio * Math.PI * 3 + t * 0.08) * 5 * ext;
+    const ly = cellBottom - lamH * Math.sin(ratio * Math.PI * 0.9) - ripple;
+    ctx.lineTo(lx, ly);
+  }
+  ctx.lineTo(cx + CELL_W * 0.65 + lamW, cellBottom + 1);
+  ctx.lineTo(cx + CELL_W * 0.65, cellBottom + 1);
+  ctx.closePath();
+
+  const lamGrad = ctx.createLinearGradient(cx + CELL_W, cellBottom - lamH, cx + CELL_W + lamW, cellBottom);
+  lamGrad.addColorStop(0, `rgba(58,232,176,${0.5 * ext})`);
+  lamGrad.addColorStop(0.7, `rgba(58,232,176,${0.22 * ext})`);
+  lamGrad.addColorStop(1, `rgba(58,232,176,${0.03 * ext})`);
+  ctx.fillStyle = lamGrad;
+  ctx.fill();
+  ctx.strokeStyle = `rgba(58,232,176,${0.75 * ext})`;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+  ctx.restore();
+
+  if (ext > 0.4) {
+    ctx.save();
+    ctx.font = 'bold 11px Space Mono';
+    ctx.fillStyle = `rgba(58,232,176,${ext})`;
+    ctx.fillText('Lamelipodio', cx + CELL_W + lamW * 0.05, cellBottom - lamH - 12);
+    ctx.restore();
+  }
+}
+
+function drawFilopodia(cx) {
+  const p = phaseNorm();
+  const ext = p < 0.65 ? Math.min(1, p / 0.15) : Math.max(0, 1 - (p - 0.65) / 0.15);
+  if (ext < 0.05) return;
+
+  const count = 6;
+  const baseX = cx + CELL_W * 0.65 + lastLamW * 0.25;
+
+  for (let i = 0; i < count; i++) {
+    const spread = (i - (count - 1) / 2) * 0.18;
+    const baseLen = 24 + i * 7;
+    const len = (baseLen + 10 * Math.sin(t * 0.05 + i * 1.4)) * ext;
+    const wave = Math.sin(t * 0.08 + i * 1.1) * 5;
+
+    const startX = baseX + i * 5;
+    const startY = cellBottom - 2;
+    const endX = startX + len * Math.cos(spread * 0.4);
+    const endY = startY + Math.sin(spread) * len * 0.5 + wave - 4;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(startX + len * 0.5, startY + wave * 0.4, endX, endY);
+    ctx.strokeStyle = `rgba(255,224,102,${0.85 * ext})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(endX, endY, 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,224,102,${ext})`;
+    ctx.shadowColor = '#ffe066';
+    ctx.shadowBlur = 9;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (ext > 0.5) {
+    ctx.save();
+    ctx.font = 'bold 10px Space Mono';
+    ctx.fillStyle = `rgba(255,224,102,${ext * 0.9})`;
+    ctx.fillText('Filopodios', cx + CELL_W + lastLamW * 0.1, cellBottom - 35);
+    ctx.restore();
+  }
+}
+
+function drawAdhesions(cx) {
+  const p = phaseNorm();
+  const frontA = p > 0.24 && p < 0.78
+    ? Math.min(1, (p - 0.24) / 0.1) * Math.min(1, (0.78 - p) / 0.08) : 0;
+  const rearA = p > 0.72
+    ? Math.min(1, (p - 0.72) / 0.08) * Math.min(1, (1.0 - p) / 0.05 + 0.3) : 0;
+
+  if (frontA > 0.05) {
+    const pts = 5;
+    for (let i = 0; i < pts; i++) {
+      const ax = cx + CELL_W * 0.1 + i * (CELL_W * 1.0 / (pts - 1));
+      const ay = SURF_Y;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(ax, ay, 5 + Math.sin(t * 0.12 + i) * 1, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,85,85,${frontA * 0.9})`;
+      ctx.shadowColor = '#ff5555';
+      ctx.shadowBlur = 14;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(ax, cellBottom);
+      ctx.lineTo(ax, ay);
+      ctx.strokeStyle = `rgba(255,85,85,${frontA * 0.55})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.font = 'bold 11px Space Mono';
+    ctx.fillStyle = `rgba(255,85,85,${frontA})`;
+    ctx.fillText('Adhesión', cx + CELL_W * 0.2, SURF_Y + 30);
+    ctx.restore();
+  }
+
+  if (rearA > 0.05) {
+    for (let i = 0; i < 3; i++) {
+      const ax = cx - CELL_W * 0.45 - i * 20;
+      const ay = SURF_Y;
+      const snap = Math.sin(t * 0.18 + i) * 6;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(ax, ay, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(249,115,22,${rearA * 0.9})`;
+      ctx.shadowColor = '#f97316';
+      ctx.shadowBlur = 13;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(ax, cellBottom);
+      ctx.lineTo(ax + snap, ay);
+      ctx.strokeStyle = `rgba(249,115,22,${rearA * 0.5})`;
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([3, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.font = 'bold 11px Space Mono';
+    ctx.fillStyle = `rgba(249,115,22,${rearA})`;
+    ctx.fillText('Retracción', cx - CELL_W - 95, cellCY - 10);
+    ctx.restore();
+  }
+}
+
+function drawTraction(cx) {
+  const p = phaseNorm();
+  if (p < 0.48 || p > 0.80) return;
+  const alpha = Math.min(1, (p - 0.48) / 0.08) * Math.min(1, (0.80 - p) / 0.06);
+
+  for (let i = 0; i < 3; i++) {
+    const ay = cellCY - 12 + i * 14;
+    const ax = cx - 25 + i * 5;
+    const anim = Math.sin(t * 0.12 + i * 1.2) * 0.5 + 0.5;
+    const len = 32 + anim * 14;
+
+    ctx.save();
+    ctx.globalAlpha = alpha * (0.5 + anim * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax + len, ay);
+    ctx.strokeStyle = '#a78bfa';
+    ctx.lineWidth = 2.2;
+    ctx.shadowColor = '#a78bfa';
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ax + len, ay);
+    ctx.lineTo(ax + len - 10, ay - 5);
+    ctx.lineTo(ax + len - 10, ay + 5);
+    ctx.closePath();
+    ctx.fillStyle = '#a78bfa';
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = 'bold 11px Space Mono';
+  ctx.fillStyle = '#a78bfa';
+  ctx.fillText('Tracción →', cx - 35, cellCY - 38);
+  ctx.restore();
+}
+
+function drawCell(cx) {
+  const p = phaseNorm();
+
+  // Contact shadow on surface
+  ctx.save();
+  const shadow = ctx.createRadialGradient(cx, SURF_Y, 5, cx, SURF_Y, CELL_W * 1.1);
+  shadow.addColorStop(0, 'rgba(30,100,200,0.28)');
+  shadow.addColorStop(1, 'rgba(30,100,200,0)');
+  ctx.beginPath();
+  ctx.ellipse(cx, SURF_Y + 2, CELL_W * 1.05, 14, 0, 0, Math.PI * 2);
+  ctx.fillStyle = shadow;
+  ctx.fill();
+  ctx.restore();
+
+  // Tail / uropodia on surface
+  const tailLen = 28 + 18 * Math.sin(p * Math.PI * 2 + Math.PI);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx - CELL_W * 0.7, cellBottom);
+  ctx.quadraticCurveTo(cx - CELL_W - tailLen * 0.6, cellBottom - 10, cx - CELL_W - tailLen, cellBottom);
+  ctx.lineTo(cx - CELL_W - tailLen, cellBottom + 1.5);
+  ctx.lineTo(cx - CELL_W * 0.7, cellBottom + 1.5);
+  ctx.closePath();
+  const tailG = ctx.createLinearGradient(cx - CELL_W - tailLen, cellBottom, cx - CELL_W * 0.5, cellBottom);
+  tailG.addColorStop(0, 'rgba(60,100,200,0.06)');
+  tailG.addColorStop(1, 'rgba(80,140,255,0.38)');
+  ctx.fillStyle = tailG;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(100,160,255,0.48)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Cell body — ellipse with bottom touching SURF_Y
+  const bx = cx;
+  const by = SURF_Y - CELL_H / 2;  // center vertically
+
+  ctx.save();
+  const bodyGrad = ctx.createRadialGradient(bx - 12, by - 12, 6, bx, by, CELL_W * 0.95);
+  bodyGrad.addColorStop(0, 'rgba(150,205,255,0.72)');
+  bodyGrad.addColorStop(0.5, 'rgba(60,120,220,0.48)');
+  bodyGrad.addColorStop(1, 'rgba(20,55,145,0.68)');
+  ctx.beginPath();
+  ctx.ellipse(bx, by, CELL_W, CELL_H / 2, 0, 0, Math.PI * 2);
+  ctx.fillStyle = bodyGrad;
+  ctx.shadowColor = '#3a80f8';
+  ctx.shadowBlur = 26;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(120,190,255,0.65)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  // Membrane ruffles on top
+  ctx.save();
+  ctx.beginPath();
+  const rSteps = 40;
+  for (let i = 0; i <= rSteps; i++) {
+    const angle = Math.PI + (i / rSteps) * Math.PI;
+    const r = CELL_W + Math.sin(i * 2 + t * 0.09) * 3.5;
+    const px = bx + r * Math.cos(angle);
+    const py = by + (CELL_H / 2) * 0.92 * Math.sin(angle);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.strokeStyle = 'rgba(160,215,255,0.3)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.restore();
+
+  // Nucleus
+  ctx.save();
+  const nGrad = ctx.createRadialGradient(bx - 5, by - 4, 3, bx, by, 22);
+  nGrad.addColorStop(0, 'rgba(200,225,255,0.78)');
+  nGrad.addColorStop(1, 'rgba(50,80,200,0.58)');
+  ctx.beginPath();
+  ctx.ellipse(bx, by, 22, 16, 0, 0, Math.PI * 2);
+  ctx.fillStyle = nGrad;
+  ctx.strokeStyle = 'rgba(180,210,255,0.5)';
+  ctx.lineWidth = 1.2;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Actin stress fibers
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  for (let i = 0; i < 5; i++) {
+    const fy = by - CELL_H * 0.22 + i * (CELL_H * 0.45 / 4);
+    ctx.beginPath();
+    ctx.moveTo(bx - CELL_W * 0.72, fy + Math.sin(t * 0.005 + i) * 3);
+    ctx.lineTo(bx + CELL_W * 0.72, fy + Math.sin(t * 0.005 + i + 1) * 3);
+    ctx.strokeStyle = '#7ab8f0';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawProgress() {
+  const p = phaseNorm();
+  const colors = ['#3ae8b0','#ff5555','#a78bfa','#f97316'];
+  const ph = Math.min(3, Math.floor(p * 4));
+  const bx = 30, by = H - 20, bw = W - 60, bh = 5;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 3);
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw * p, bh, 3);
+  ctx.fillStyle = colors[ph];
+  ctx.shadowColor = colors[ph];
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = '9px Space Mono';
+  const labels = ['Extensión','Adhesión','Tracción','Retracción'];
+  for (let i = 0; i < 4; i++) {
+    const lx = bx + bw * (i / 4) + 4;
+    ctx.fillStyle = i === ph ? colors[i] : 'rgba(255,255,255,0.25)';
+    ctx.fillText(labels[i], lx, by - 5);
+  }
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  drawSubstrate();
+  drawArrow();
+
+  const speed = 0.3;
+  cellX += speed;
+  if (cellX > W - 80) {
+    cellX = 120;
+    cycleTime = 0;
+  }
+
+  const cx = cellX;
+
+  drawLamellipodium(cx);
+  drawFilopodia(cx);
+  drawAdhesions(cx);
+  drawTraction(cx);
+  drawCell(cx);
+  drawProgress();
+
+  document.getElementById('phase-box').textContent = PHASES[phaseIdx()];
+
+  t++;
+  cycleTime++;
+  animId = requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body>
+</html>
